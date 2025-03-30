@@ -128,7 +128,7 @@ class BoardCore:
             "selected_objects": [],
             "mouse_trajectory": [{"xy":[1,1],"bbox":[]},],
             "background_color": "white",
-            "rendered_object_bbox":[{"name":"","bbox":""}]
+            "rendered_static_bbox":{}
         }
         self.toolbar_size = 20
         self.toolbar_start_x = 10
@@ -144,8 +144,8 @@ class BoardCore:
             "tool_flip",
             "tool_pen",
             "tool_eraser",
-            "size_increase",
-            "size_decrease",
+            "tool_inc",
+            "tool_dec",
             "color_black",
             "color_white",
             "color_blue",
@@ -157,6 +157,15 @@ class BoardCore:
             "color_darkblue",
             "color_brown",
         ]
+        for i, button in enumerate(self.toolbar_buttons):
+            bbox = [
+                self.toolbar_start_x,
+                self.toolbar_start_y + i * (self.toolbar_size + self.toolbar_gap),
+                self.toolbar_start_x + + self.toolbar_size,
+                self.toolbar_start_y + i * (self.toolbar_size + self.toolbar_gap)
+                + self.toolbar_size ,
+            ]
+            self.state["rendered_static_bbox"][button] = bbox
 
         self.color_map = {
             0: "white",
@@ -184,117 +193,117 @@ class BoardCore:
         self.text_layer.text(self.text_position, self.text_content, fill=self.text_color)
 
     def draw_grid_region(self):
-        task_sample_size = len(self.dataset[self.task_id]["input"])
 
-        def draw_single_grid(grid: np.array, base):
+        def draw_single_grid(grid: np.array, base, grid_name):
             for i in range(grid.shape[0]):
                 for j in range(grid.shape[1]):
                     color = self.color_map[grid[i][j]]
                     bbox = [
-                        base[0] + i * self.object_size,
-                        base[1] + j * self.object_size,
-                        base[0] + (i + 1) * self.object_size,
-                        base[1] + (j + 1) * self.object_size,
+                        base[0] + i * self.object_pixel_size,
+                        base[1] + j * self.object_pixel_size,
+                        base[0] + (i + 1) * self.object_pixel_size,
+                        base[1] + (j + 1) * self.object_pixel_size,
                     ]
                     #  50% 灰度 (128, 128, 128)
                     self.board_layer.rectangle(
                         bbox, fill=color, outline=(128, 128, 128), width=1
                     )
+                    self.state["rendered_static_bbox"][f"{grid_name}_{i}_{j}"] = bbox
+        self.train_region_base = [250, 50]
+        self.train_test_region_gap = 400
+        self.test_region_base = [self.train_region_base[0] + self.train_test_region_gap, self.train_region_base[1]]
+        self.grid_gap = 20
+        self.object_pixel_size = 20
+        self.max_result_grid_size = 20
+        self.result_region_pixels_size = [self.object_pixel_size * self.max_result_grid_size, self.object_pixel_size * self.max_result_grid_size]
 
-        task_train_region_base = [100, 100]
-        task_test_region_base = [400 + 100, 100]
-        grid_gap = 20
-        self.object_size = 20
-        result_region_pixels_size = [self.object_size * 20, self.object_size * 20]
-
+        task_sample_size = len(self.dataset[self.task_id]["input"])
+        task_train_region_base = self.train_region_base
+        task_test_region_base = self.test_region_base
         for task_sample_index in range(task_sample_size):
-            input = self.dataset[self.task_id]["input"][task_sample_index]
-            output = self.dataset[self.task_id]["output"][task_sample_index]
-            input_pixel_size = [
-                input.shape[0] * self.object_size,
-                input.shape[1] * self.object_size,
-            ]
-            output_pixel_size = [
-                output.shape[0] * self.object_size,
-                output.shape[1] * self.object_size,
-            ]
-            if task_sample_index < task_sample_size - 1:
-                input_region_baze = task_train_region_base
-                task_train_region_base = [
+            mode = "train" if task_sample_index < task_sample_size - 1 else "test"
+            input_pixel_size = None
+            output_pixel_size = None
+            for put in ["input", "output"]:
+                grid = self.dataset[self.task_id][put][task_sample_index]
+                grid_pixel_size = [
+                    grid.shape[0] * self.object_pixel_size,
+                    grid.shape[1] * self.object_pixel_size,
+                ]
+                if put == "input":
+                    input_pixel_size = grid_pixel_size
+                else:
+                    output_pixel_size = grid_pixel_size
+                if mode == "train":
+                    region_base = task_train_region_base
+                else:
+                    region_base = task_test_region_base
+                
+                if put == "output":
+                    region_base = [
+                            region_base[0] + input_pixel_size[0] + self.grid_gap,
+                            region_base[1],
+                        ]
+                if mode == "test" and put == "output":
+                    self.board_layer.rectangle(
+                        [
+                            region_base[0],
+                            region_base[1],
+                            region_base[0] + self.result_region_pixels_size[0],
+                            region_base[1] + self.result_region_pixels_size[1],
+                        ],
+                        outline="black",
+                        width=2,
+                    )
+                else:
+                    draw_single_grid(grid, region_base, mode + "_" + put)
+            task_train_region_base = [
                     task_train_region_base[0],
                     task_train_region_base[1]
                     + max(input_pixel_size[1], output_pixel_size[1])
-                    + grid_gap,
+                    + self.grid_gap,
                 ]
-            else:
-                input_region_baze = task_test_region_base
-            output_region_base = [
-                input_region_baze[0] + input_pixel_size[0] + grid_gap,
-                input_region_baze[1],
-            ]
-            draw_single_grid(input, input_region_baze)
 
-            if task_sample_index < task_sample_size - 1:
-                draw_single_grid(output, output_region_base)
-            else:
-                self.board_layer.rectangle(
-                    [
-                        output_region_base[0],
-                        output_region_base[1],
-                        output_region_base[0] + result_region_pixels_size[0],
-                        output_region_base[1] + result_region_pixels_size[1],
-                    ],
-                    outline="black",
-                    width=2,
-                )
+
 
     def draw_toolbar(self):
         self.tool_layer.rectangle(
             [0, 0, self.width, self.height], fill=(255, 255, 255, 0)
         )
         for i, button in enumerate(self.toolbar_buttons):
+            bbox = self.state["rendered_static_bbox"][button]
+            center_x = (bbox[0] + bbox[2]) / 2
+            center_y = (bbox[1] + bbox[3]) / 2
+            radius = (bbox[2] - bbox[0]) / 3
+            self.tool_layer.circle(
+                (center_x, center_y), radius, outline="black", width=2
+            )
             bbox = [
-                self.toolbar_start_x + i * (self.toolbar_size + self.toolbar_gap),
-                self.toolbar_start_y,
-                self.toolbar_start_x
-                + i * (self.toolbar_size + self.toolbar_gap)
-                + self.toolbar_size,
-                self.toolbar_start_y + self.toolbar_size,
+                bbox[0] + self.toolbar_size + self.toolbar_gap/2,
+                bbox[1],
+                bbox[2] + self.toolbar_size + self.toolbar_gap/2,
+                bbox[3],
             ]
             if button.startswith("color"):
                 color = button.split("_")[1]
                 self.tool_layer.rectangle(bbox, fill=color, outline="black", width=2)
-            elif button == "tool_pen":
-                center_x = (bbox[0] + bbox[2]) / 2
-                center_y = (bbox[1] + bbox[3]) / 2
-                radius = (bbox[2] - bbox[0]) / 2
-                self.tool_layer.circle(
-                    (center_x, center_y), radius, outline="black", width=2
-                )
-            elif button == "tool_eraser":
-                self.tool_layer.rectangle(bbox, outline="black", width=2)
-            elif button == "size_increase":
-                center_x = (bbox[0] + bbox[2]) / 2
-                center_y = (bbox[1] + bbox[3]) / 2
-                self.tool_layer.line(
-                    [(center_x - 10, center_y), (center_x + 10, center_y)],
+            else:
+                content_text = button[5:].upper()
+                center_x = bbox[0]
+                center_y = bbox[1]
+                font_size = 16
+                from PIL import ImageFont
+                import matplotlib.font_manager as fm
+                font_path = fm.findfont(fm.FontProperties(family='Arial'))
+                font = ImageFont.truetype(font_path, size=font_size)
+                font_height = font.getbbox(content_text)[3] - font.getbbox(content_text)[1]
+                offset_y = (bbox[3] - bbox[1] - font_height) / 2
+                self.tool_layer.text(
+                    (center_x, center_y + offset_y),
+                    content_text,
                     fill="black",
-                    width=4,
-                )
-                self.tool_layer.line(
-                    [(center_x, center_y - 10), (center_x, center_y + 10)],
-                    fill="black",
-                    width=4,
-                )
-            elif button == "size_decrease":
-                center_x = (bbox[0] + bbox[2]) / 2
-                center_y = (bbox[1] + bbox[3]) / 2
-                self.tool_layer.line(
-                    [(center_x - 10, center_y), (center_x + 10, center_y)],
-                    fill="black",
-                    width=4,
-                )
-
+                    font=font,
+                    anchor="lt",)
     def draw_mouse_trajectory_and_select(self):
         self.pen_layer.rectangle(
             [0, 0, self.width, self.height], fill=(255, 255, 255, 0)
