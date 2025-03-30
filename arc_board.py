@@ -75,6 +75,133 @@ def get_dataset(split="train"):
     return result
 
 
+def contains(trajectory, bbox):
+    """
+    Args:
+        trajectory: List[Dict], 鼠标轨迹点列表，每个点包含 {"x": float, "y": float}
+        bbox: List[float]
+    """
+    def point_in_polygon(x, y, poly):
+        """
+        使用射线法判断点 (x, y) 是否在多边形 poly 内部。
+        """
+        n = len(poly)
+        inside = False
+        points = [(p["x"], p["y"]) for p in poly]
+        p1x, p1y = points[0]
+        for i in range(n + 1):
+            p2x, p2y = points[i % n]
+            # 检查水平射线与多边形边的交点
+            if y > min(p1y, p2y):
+                if y <= max(p1y, p2y):
+                    if x <= max(p1x, p2x):
+                        if p1y != p2y:
+                            xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                        if p1x == p2x or x <= xinters:
+                            inside = not inside
+            p1x, p1y = p2x, p2y
+        return inside
+
+    left, top, right, bottom = bbox
+    corners = [
+        (left, top),
+        (right, top),
+        (right, bottom),
+        (left, bottom)
+    ]    
+    for corner_x, corner_y in corners:
+        if not point_in_polygon(corner_x, corner_y, trajectory):
+            return False
+    return True
+
+
+def intersects(trajectory, bbox):
+    """    
+    Args:
+        trajectory: List[Dict], 轨迹点列表，每个点包含 {"x": float, "y": float}
+        bbox: List[float], 矩形的边界框 [left, top, right, bottom]
+    """
+    def orientation(p, q, r):
+        """
+        计算点 p, q, r 的方向，用于判断线段是否相交。
+        返回值：
+            0 --> 共线
+            1 --> 顺时针
+            2 --> 逆时针
+        """
+        val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])
+        if val == 0:
+            return 0
+        return 1 if val > 0 else 2
+
+    def on_segment(p, q, r):
+        """
+        判断点 q 是否在线段 p-r 上。
+        """
+        return (q[0] <= max(p[0], r[0]) and q[0] >= min(p[0], r[0]) and
+                q[1] <= max(p[1], r[1]) and q[1] >= min(p[1], r[1]))
+
+    def do_segments_intersect(p1, q1, p2, q2):
+        """
+        判断线段 p1-q1 和 p2-q2 是否相交。
+        """
+        o1 = orientation(p1, q1, p2)
+        o2 = orientation(p1, q1, q2)
+        o3 = orientation(p2, q2, p1)
+        o4 = orientation(p2, q2, q1)
+
+        if o1 != o2 and o3 != o4:
+            return True
+
+        if o1 == 0 and on_segment(p1, p2, q1): return True
+        if o2 == 0 and on_segment(p1, q2, q1): return True
+        if o3 == 0 and on_segment(p2, p1, q2): return True
+        if o4 == 0 and on_segment(p2, q1, q2): return True
+
+        return False
+
+    # 如果轨迹少于2个点，无法形成线段
+    if len(trajectory) < 2:
+        return False
+
+    left, top, right, bottom = bbox
+    min_x = min(p["x"] for p in trajectory)
+    max_x = max(p["x"] for p in trajectory)
+    min_y = min(p["y"] for p in trajectory)
+    max_y = max(p["y"] for p in trajectory)
+    if max_x < left or min_x > right or max_y < top or min_y > bottom:
+        return False
+
+    # 检查轨迹的每个端点是否在 bbox 内部
+    for point in trajectory:
+        x, y = point["x"], point["y"]
+        if left < x < right and top < y < bottom:
+            return True
+
+    # 定义矩形的四条边
+    bbox_edges = [
+        ((left, top), (right, top)),      # 上边
+        ((right, top), (right, bottom)),  # 右边
+        ((right, bottom), (left, bottom)),# 下边
+        ((left, bottom), (left, top))     # 左边
+    ]
+
+    # 检查轨迹的每条线段是否与矩形的任意一边相交
+    for i in range(len(trajectory) - 1):
+        p1 = (trajectory[i]["x"], trajectory[i]["y"])
+        p2 = (trajectory[i + 1]["x"], trajectory[i + 1]["y"])
+        
+        # 快速拒绝测试每条线段
+        if (max(p1[0], p2[0]) < left or min(p1[0], p2[0]) > right or
+            max(p1[1], p2[1]) < top or min(p1[1], p2[1]) > bottom):
+            continue
+        
+        for edge_start, edge_end in bbox_edges:
+            if do_segments_intersect(p1, p2, edge_start, edge_end):
+                return True
+
+    return False
+
 class MouseAction(BaseModel):
     press: bool
     x: float
@@ -87,47 +214,24 @@ class BoardCore:
         self.task_id = 0
         self.width = 1200
         self.height = 800
-        self.board_image = Image.new("RGB", (self.width, self.height), "white")
-        self.board_layer = ImageDraw.Draw(self.board_image)
-        self.tool_image = Image.new("RGBA", (self.width, self.height), "white")
-        self.tool_layer = ImageDraw.Draw(self.tool_image)
-        self.pen_image = Image.new("RGBA", (self.width, self.height), "white")
-        self.pen_layer = ImageDraw.Draw(self.pen_image)
-        self.text_image = Image.new("RGBA", (self.width, self.height), (255, 255, 255, 0))
-        self.text_layer = ImageDraw.Draw(self.text_image)
-
-        # select 点击，拖动，松开，显示鼠标轨迹
-        # 如果轨迹闭合，就选择完全在区域内部的方块
-        # 如果轨迹不闭合，就选择与轨迹相交的方块
-        # 选中的方块颜色不变，填充斜线
-        # 选中区域如果在result区域，是可以选择填充颜色
-        # 选中区域如果在input区域，是可以将区域拖动到output区域
-        # 再次按住鼠标左键，拖动，可以移动选中的方块
-        # 如何取消选中的物体？点击空白区域？
-
-        # 选中物体，点击fill，选择颜色，填充颜色
-        # 选中物体，如果物体在result区域，点击rotate，旋转物体
-        # 选中物体，如果物体在result区域，点击flip，翻转物体
-        # 选中物体，如果物体在input区域，点击move，移动物体，背景区域填充
-
-        # 背景颜色？被移动的物体的原来不覆盖区域自动填充为背景颜色
-        # 背景颜色怎么选择？颜色有两个前景和背景
-
-        # result区域，是否有背景grid
-        # 结果边框怎么定？
-
+        self.static_image = Image.new("RGB", (self.width, self.height), "white")
+        self.static_layer = ImageDraw.Draw(self.static_image)
+        self.pen_and_debug_text_image = Image.new("RGBA", (self.width, self.height), (255, 255, 255, 0))
+        self.pen_and_debug_text_layer = ImageDraw.Draw(self.pen_and_debug_text_image)
+        self.pen_trajectory_image = Image.new("RGBA", (self.width, self.height), (255, 255, 255, 0))
+        self.pen_trajectory_layer = ImageDraw.Draw(self.pen_trajectory_image)
+        self.select_trajectory_image = Image.new("RGBA", (self.width, self.height), (255, 255, 255, 0))
+        self.select_trajectory_layer = ImageDraw.Draw(self.select_trajectory_image)
         self.state = {
-            "tool": "pen",
+            "tool": "select",
             "color": "black",
+            "background_color": "white",
             "pen_size": 4,
             "eraser_size": 20,
-            "pre_x": 0,
-            "pre_y": 0,
-            "pre_press": False,
-            "button": None,
+            "mouse_state":{},
+            "pre_mouse_state":{},
             "selected_objects": [],
-            "mouse_trajectory": [{"xy":[1,1],"bbox":[]},],
-            "background_color": "white",
+            "press_mouse_trajectory": [],
             "rendered_static_bbox":{}
         }
         self.toolbar_size = 20
@@ -183,17 +287,8 @@ class BoardCore:
         self.draw_toolbar()
         self.draw_grid_region()
 
-    def draw_text_layer(self):
-        self.text_content = json.dumps(self.state, indent=2)
-        self.text_position = (600, 600)
-        self.text_color = "black"
-        self.text_font_size = 20
-        self.text_image = Image.new("RGBA", (self.width, self.height), (255, 255, 255, 0))
-        self.text_layer = ImageDraw.Draw(self.text_image)
-        self.text_layer.text(self.text_position, self.text_content, fill=self.text_color)
 
     def draw_grid_region(self):
-
         def draw_single_grid(grid: np.array, base, grid_name):
             for i in range(grid.shape[0]):
                 for j in range(grid.shape[1]):
@@ -205,7 +300,7 @@ class BoardCore:
                         base[1] + (j + 1) * self.object_pixel_size,
                     ]
                     #  50% 灰度 (128, 128, 128)
-                    self.board_layer.rectangle(
+                    self.static_layer.rectangle(
                         bbox, fill=color, outline=(128, 128, 128), width=1
                     )
                     self.state["rendered_static_bbox"][f"{grid_name}_{i}_{j}"] = bbox
@@ -245,7 +340,7 @@ class BoardCore:
                             region_base[1],
                         ]
                 if mode == "test" and put == "output":
-                    self.board_layer.rectangle(
+                    self.static_layer.rectangle(
                         [
                             region_base[0],
                             region_base[1],
@@ -256,7 +351,7 @@ class BoardCore:
                         width=2,
                     )
                 else:
-                    draw_single_grid(grid, region_base, mode + "_" + put)
+                    draw_single_grid(grid, region_base, mode + "_" + str(task_sample_index) + put)
             task_train_region_base = [
                     task_train_region_base[0],
                     task_train_region_base[1]
@@ -264,10 +359,8 @@ class BoardCore:
                     + self.grid_gap,
                 ]
 
-
-
     def draw_toolbar(self):
-        self.tool_layer.rectangle(
+        self.static_layer.rectangle(
             [0, 0, self.width, self.height], fill=(255, 255, 255, 0)
         )
         for i, button in enumerate(self.toolbar_buttons):
@@ -275,7 +368,7 @@ class BoardCore:
             center_x = (bbox[0] + bbox[2]) / 2
             center_y = (bbox[1] + bbox[3]) / 2
             radius = (bbox[2] - bbox[0]) / 3
-            self.tool_layer.circle(
+            self.static_layer.circle(
                 (center_x, center_y), radius, outline="black", width=2
             )
             bbox = [
@@ -286,7 +379,7 @@ class BoardCore:
             ]
             if button.startswith("color"):
                 color = button.split("_")[1]
-                self.tool_layer.rectangle(bbox, fill=color, outline="black", width=2)
+                self.static_layer.rectangle(bbox, fill=color, outline="black", width=2)
             else:
                 content_text = button[5:].upper()
                 center_x = bbox[0]
@@ -298,34 +391,55 @@ class BoardCore:
                 font = ImageFont.truetype(font_path, size=font_size)
                 font_height = font.getbbox(content_text)[3] - font.getbbox(content_text)[1]
                 offset_y = (bbox[3] - bbox[1] - font_height) / 2
-                self.tool_layer.text(
+                self.static_layer.text(
                     (center_x, center_y + offset_y),
                     content_text,
                     fill="black",
                     font=font,
                     anchor="lt",)
-    def draw_mouse_trajectory_and_select(self):
-        self.pen_layer.rectangle(
+
+    def draw_pen_and_debug_text(self):
+        self.pen_and_debug_text_layer.rectangle(
             [0, 0, self.width, self.height], fill=(255, 255, 255, 0)
         )
+        # debug
+        self.text_content = json.dumps(self.state, indent=2)
+        self.text_position = (600, 0)
+        self.text_color = "black"
+        self.text_font_size = 20
+        self.pen_and_debug_text_layer.text(self.text_position, self.text_content, fill=self.text_color)
 
-        if self.state["tool"] == "pen":
-            self.pen_layer.circle(
-                (self.state["pre_x"], self.state["pre_y"]),
+        # Draw diagonal lines on selected blocks
+        for bbox in self.state["selected_objects"]:
+            # Draw two diagonal lines to form an "X"
+            self.pen_trajectory_layer.line(
+                [(bbox[0], bbox[1]), (bbox[2], bbox[3])],
+                fill="black",
+                width=1
+            )
+            self.pen_trajectory_layer.line(
+                [(bbox[0], bbox[3]), (bbox[2], bbox[1])],
+                fill="black",
+                width=1
+            )
+
+        if self.state["tool"] == "pen" or "select" in self.state["tool"]:
+            self.pen_and_debug_text_layer.circle(
+                (self.state["mouse_state"]["x"], self.state["mouse_state"]["y"]),
                 self.state["pen_size"],
                 outline=self.state["color"],
                 width=2,
             )
-        else:
-            self.pen_layer.rectangle(
+        elif self.state["tool"] == "eraser":
+            self.pen_and_debug_text_layer.rectangle(
                 [
                     (
-                        self.state["pre_x"] - self.state["eraser_size"] / 2,
-                        self.state["pre_y"] - self.state["eraser_size"] / 2,
+                        self.state["pre_mouse_state"]["x"] - self.state["eraser_size"] / 2,
+                        self.state["pre_mouse_state"]["y"] - self.state["eraser_size"] / 2,
                     ),
                     (
-                        self.state["pre_x"] + self.state["eraser_size"] / 2,
-                        self.state["pre_y"] + self.state["eraser_size"] / 2,
+                        self.state["mouse_state"]["x"] + self.state["eraser_size"] / 2,
+                        self.state["mouse_state"]["y"] + self.state["eraser_size"] / 2,
                     ),
                 ],
                 fill="white",
@@ -334,78 +448,125 @@ class BoardCore:
             )
 
     def handle_mouse_action(self, press: bool, x: float, y: float):
-        pre_button = self.state["button"]
-        cur_button = None
-        pre_press = self.state["pre_press"]
-        cur_press = press
-        for i, button in enumerate(self.toolbar_buttons):
-            bbox = [
-                self.toolbar_start_x + i * (self.toolbar_size + self.toolbar_gap),
-                self.toolbar_start_y,
-                self.toolbar_start_x + (i + 1) * (self.toolbar_size + self.toolbar_gap),
-                self.toolbar_start_y + self.toolbar_size,
-            ]
-            if bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3]:
-                cur_button = button
-
-        if pre_press and cur_press:
-            if pre_button is None and cur_button is None:
-                if self.state["tool"] == "pen":
-                    self.board_layer.line(
-                        [(self.state["pre_x"], self.state["pre_y"]), (x, y)],
-                        fill=self.state["color"],
-                        width=self.state["pen_size"],
+        self.state["mouse_state"] = {"press":press, "x":x, "y":y}
+        if press:
+            trajectory_point = {"press":press, "x":x, "y":y}
+            self.state["press_mouse_trajectory"].append(trajectory_point)
+            if self.state["tool"] == "pen":
+                self.pen_trajectory_layer.line(
+                    [(self.state["mouse_state"]["x"], self.state["mouse_state"]["y"]), (x, y)],
+                    fill=self.state["color"],
+                    width=self.state["pen_size"],
+                    joint="curve",
+                )
+            elif self.state["tool"] == "eraser":
+                self.pen_trajectory_layer.rectangle(
+                    [
+                        (
+                            x - self.state["eraser_size"] / 2,
+                            y - self.state["eraser_size"] / 2,
+                        ),
+                        (
+                            x + self.state["eraser_size"] / 2,
+                            y + self.state["eraser_size"] / 2,
+                        ),
+                    ],
+                    fill="white",
+                    outline="black",
+                    width=2,
+                )
+            elif self.state["tool"] == "select":
+                # 绘制选择轨迹
+                if len(self.state["press_mouse_trajectory"]) > 1:
+                    cur_xy = self.state["press_mouse_trajectory"][-1]
+                    pre_xy = self.state["press_mouse_trajectory"][-2]
+                    self.select_trajectory_layer.line(
+                        [(pre_xy["x"], pre_xy["y"]), (cur_xy["x"], cur_xy["y"])],
+                        fill="black",
+                        width=3,
                         joint="curve",
                     )
-        elif not pre_press and cur_press:
-            if pre_button is None and cur_button is not None:
-                self.state["button"] = cur_button
-        elif pre_press and not cur_press:
-            if pre_button is not None and cur_button is not None:
-                if pre_button == cur_button:
-                    if self.state["tool"] == "pen":
-                        if cur_button == "eraser":
-                            self.state["tool"] = "eraser"
-                        elif cur_button == "increase_size":
-                            if self.state["pen_size"] <= 6:
-                                self.state["pen_size"] += 2
-                        elif cur_button == "decrease_size":
-                            if self.state["pen_size"] >= 2:
-                                self.state["pen_size"] -= 2
-                        elif cur_button.startswith("color"):
-                            self.state["color"] = cur_button.split("_")[1]
-                    elif self.state["tool"] == "eraser":
-                        if cur_button == "pen":
-                            self.state["tool"] = "pen"
-                        elif cur_button == "increase_size":
-                            if self.state["eraser_size"] <= 18:
-                                self.state["eraser_size"] += 2
-                        elif cur_button == "decrease_size":
-                            if self.state["eraser_size"] >= 2:
-                                self.state["eraser_size"] -= 2
-                self.state["button"] = None
-        self.draw_mouse_trajectory_and_select()
-        self.draw_text_layer()
-        self.state["pre_press"] = cur_press
-        self.state["pre_x"] = x
-        self.state["pre_y"] = y
+        else:
+            if len(self.state["press_mouse_trajectory"]) > 0:
+                trajectory_point = {"press":press, "x":x, "y":y}
+                self.state["press_mouse_trajectory"].append(trajectory_point)
+                if self.state["tool"] == "select":
+                    # 清除选择轨迹 TODO maybe use pen layer more effcient?
+                    self.select_trajectory_layer.rectangle([0, 0, self.width, self.height], fill=(255, 255, 255, 0))
+                    # 鼠标抬起后，判断轨迹是否闭合，判断标准起点和终点的像素点小于5 pixel
+                    start_point = self.state["press_mouse_trajectory"][0]
+                    end_point = self.state["press_mouse_trajectory"][-1]
+                    if abs(start_point["x"] - end_point["x"]) < 5 and abs(start_point["y"] - end_point["y"]) < 5:
+                        # 闭合，选择完全在区域内部的方块
+                        for name, bbox in self.state["rendered_static_bbox"].items():
+                            if "train" in name or "test" in name:
+                                if contains(self.state["press_mouse_trajectory"], bbox):
+                                    self.state["selected_objects"].append(bbox)
+                    else:
+                        # 不闭合，选择与轨迹相交的方块
+                        for name, bbox in self.state["rendered_static_bbox"].items():
+                            if "train" in name or "test" in name:
+                                if "train_input_1_1" in name:
+                                    print("------------")
+                                if intersects(self.state["press_mouse_trajectory"], bbox):
+                                    self.state["selected_objects"].append(bbox)
+                    # 选中的方块颜色不变，填充斜线 draw in pen layer
+
+                    # TODO
+                    # 如何取消选中的物体？点击空白区域？
+                    # 选中物体，点击fill，选择颜色，填充颜色
+                    # 选中物体，如果物体在result区域，点击rotate，旋转物体
+                    # 选中物体，如果物体在result区域，点击flip，翻转物体
+                    # 选中物体，如果物体在input区域，点击move，移动物体，背景区域填充
+                    # result区域背景颜色？被移动的物体的原来不覆盖区域自动填充为背景颜色
+                    # 结果边框怎么定？
+                self.state["press_mouse_trajectory"] = []
+            else:
+                pass
+
+                # if pre_button == cur_button:
+                #     if self.state["tool"] == "pen":
+                #         if cur_button == "eraser":
+                #             self.state["tool"] = "eraser"
+                #         elif cur_button == "increase_size":
+                #             if self.state["pen_size"] <= 6:
+                #                 self.state["pen_size"] += 2
+                #         elif cur_button == "decrease_size":
+                #             if self.state["pen_size"] >= 2:
+                #                 self.state["pen_size"] -= 2
+                #         elif cur_button.startswith("color"):
+                #             self.state["color"] = cur_button.split("_")[1]
+                #     elif self.state["tool"] == "eraser":
+                #         if cur_button == "pen":
+                #             self.state["tool"] = "pen"
+                #         elif cur_button == "increase_size":
+                #             if self.state["eraser_size"] <= 18:
+                #                 self.state["eraser_size"] += 2
+                #         elif cur_button == "decrease_size":
+                #             if self.state["eraser_size"] >= 2:
+                #                 self.state["eraser_size"] -= 2
+        
+        self.draw_pen_and_debug_text()
+        self.state["pre_mouse_state"] = {"press":press, "x":x, "y":y}
+
 
     def render(self):
         buffered = BytesIO()
         self.final_image = Image.new("RGB", (self.width, self.height), "white")
-        self.final_image.paste(self.board_image, (0, 0))
+        self.final_image.paste(self.static_image, (0, 0))
         self.final_image.paste(
-            self.pen_image, (0, 0), mask=self.pen_image.convert("RGBA").split()[3]
+            self.pen_trajectory_image, (0, 0), mask=self.pen_trajectory_image.split()[3]
         )
         self.final_image.paste(
-            self.tool_image, (0, 0), mask=self.tool_image.convert("RGBA").split()[3]
+            self.select_trajectory_image, (0, 0), mask=self.select_trajectory_image.split()[3]
         )
         self.final_image.paste(
-            self.text_image, (0, 0), mask=self.text_image.split()[3]
+            self.pen_and_debug_text_image, (0, 0), mask=self.pen_and_debug_text_image.split()[3]
         )
+
         self.final_image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        return {"board_image": img_str}
+        return {"static_image": img_str}
 
 
 app = FastAPI()
