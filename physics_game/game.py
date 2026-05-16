@@ -462,9 +462,10 @@ def _walls(w):
     w.add(Body(Vec2(980, 320), Vec2(20, 360), 0, Body.WALL, WALL_C))
 
 def L_shape(pos, mass, color, name, color_name=""):
+    # Standard L: vertical bar on left, horizontal bar on bottom
     parts = [
-        (Vec2(-10, -20), Vec2(10, 25)),   # vertical leg 20x50
-        (Vec2(20, 10), Vec2(20, 10)),     # horizontal leg 40x20
+        (Vec2(-10, -25), Vec2(10, 25)),   # vertical 20x50, top-left
+        (Vec2(25, 10), Vec2(25, 10)),     # horizontal 50x20, bottom-right
     ]
     return Body(pos, Vec2(35, 35), mass, Body.BOX, color, name=name, color_name=color_name, parts=parts)
 
@@ -518,10 +519,10 @@ def _level_5(w):
     w.add(Body(Vec2(600, 450), Vec2(80, 20), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
     w.add(L_shape(Vec2(350, 550), 28.0, RED, name="L1", color_name="red"))
-    big_zone = Body(Vec2(830, 170), Vec2(70, 60), 0, Body.ZONE, RED, name="zl", color_name="red", label="L-SHAPE")
+    big_zone = Body(Vec2(830, 170), Vec2(35, 35), 0, Body.ZONE, RED, name="zl", color_name="red", label="L-SHAPE")
     big_zone.parts = [
-        (Vec2(-15, -20), Vec2(15, 30)),
-        (Vec2(35, 15), Vec2(35, 15)),
+        (Vec2(-10, -25), Vec2(10, 25)),
+        (Vec2(25, 10), Vec2(25, 10)),
     ]
     w.add(big_zone)
 
