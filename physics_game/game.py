@@ -401,7 +401,6 @@ def _level_3(w):
     w.add(Body(Vec2(700, 350), Vec2(20, 100), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(500, 200), Vec2(80, 20), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(80, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(130, 550), Vec2(14, 14), 8.0, Body.PLAYER, PINK, name="player2"))
     w.add(Body(Vec2(220, 550), Vec2(35, 35), 30.0, Body.BOX, RED, name="rb", color_name="red"))
     w.add(Body(Vec2(360, 550), Vec2(22, 22), 15.0, Body.BOX, BLUE, name="bb", color_name="blue"))
     w.add(Body(Vec2(500, 550), Vec2(28, 28), 22.0, Body.BOX, GREEN, name="gb", color_name="green"))
@@ -415,7 +414,6 @@ def _level_4(w):
     _walls(w)
     w.add(Body(Vec2(480, 300), Vec2(20, 100), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(150, 550), Vec2(14, 14), 8.0, Body.PLAYER, PINK, name="player2"))
     w.add(L_shape(Vec2(300, 550), 28.0, BROWN, name="L1", color_name="brown"))
     w.add(Body(Vec2(800, 200), Vec2(70, 70), 0, Body.ZONE, (0, 200, 0), name="z1", color_name="brown", label="TARGET"))
 
@@ -424,7 +422,6 @@ def _level_5(w):
     w.add(Body(Vec2(200, 300), Vec2(20, 80), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(600, 450), Vec2(80, 20), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(150, 550), Vec2(14, 14), 8.0, Body.PLAYER, PINK, name="player2"))
     w.add(L_shape(Vec2(350, 550), 28.0, RED, name="L1", color_name="red"))
     big_zone = Body(Vec2(830, 170), Vec2(70, 60), 0, Body.ZONE, RED, name="zl", color_name="red", label="L-SHAPE")
     big_zone.parts = [
@@ -437,7 +434,6 @@ def _level_copy(w):
     _walls(w)
     w.add(Body(Vec2(480, 300), Vec2(20, 100), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(150, 550), Vec2(14, 14), 8.0, Body.PLAYER, PINK, name="player2"))
     w.add(Body(Vec2(250, 550), Vec2(28, 28), 22.0, Body.BOX, BROWN, name="main", color_name="brown"))
     w.add(Body(Vec2(400, 550), Vec2(28, 28), 22.0, Body.BOX, GRAY, name="trash"))
     w.add(Body(Vec2(700, 550), Vec2(50, 50), 0, Body.ZONE_COPY, CYAN, name="copy_zone", label="COPY"))
@@ -448,7 +444,6 @@ def _level_6(w):
     _walls(w)
     w.add(Body(Vec2(480, 250), Vec2(20, 80), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(150, 550), Vec2(14, 14), 8.0, Body.PLAYER, PINK, name="player2"))
     w.add(Body(Vec2(250, 550), Vec2(28, 28), 20.0, Body.BOX, RED, name="n1", number=1))
     w.add(Body(Vec2(360, 550), Vec2(28, 28), 20.0, Body.BOX, BLUE, name="n2", number=2))
     w.add(Body(Vec2(470, 550), Vec2(28, 28), 20.0, Body.BOX, GREEN, name="n3", number=3))
@@ -462,7 +457,6 @@ def _level_6(w):
 def _level_7(w):
     _walls(w)
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(150, 550), Vec2(14, 14), 8.0, Body.PLAYER, PINK, name="player2"))
     w.add(Body(Vec2(480, 60), Vec2(0, 0), 0, Body.TEXT, (255,255,255), label="12 x 3 = 36"))
     w.add(Body(Vec2(250, 550), Vec2(30, 30), 22.0, Body.BOX, ORANGE, name="r1", number=36))
     w.add(Body(Vec2(300, 300), Vec2(60, 40), 0, Body.ZONE, (0,200,0), name="zs1", label="12x3", required_number=36))
@@ -471,7 +465,6 @@ def _level_7(w):
 def _level_8(w):
     _walls(w)
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(150, 550), Vec2(14, 14), 8.0, Body.PLAYER, PINK, name="player2"))
     w.add(Body(Vec2(480, 60), Vec2(0, 0), 0, Body.TEXT, (255,255,255), label="123 x 2 = 246"))
     w.add(Body(Vec2(250, 550), Vec2(30, 30), 22.0, Body.BOX, PURPLE, name="r1", number=246))
     w.add(Body(Vec2(300, 300), Vec2(60, 40), 0, Body.ZONE, (0,200,0), name="zs1", label="123x2", required_number=246))
