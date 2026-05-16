@@ -65,6 +65,7 @@ class Body:
         self.required_number = required_number
         self.pressed = False
         self.in_zone = False
+        self.zone_rewarded = False
         self.cooldown = 0.0
         self.floating_text = ""
         self.floating_timer = 0.0
@@ -380,19 +381,19 @@ def _level_1(w):
 
 def _level_2(w):
     _walls(w)
-    w.add(Body(Vec2(150, 200), Vec2(20, 20), 0, Body.WALL, WALL_C))
-    w.add(Body(Vec2(480, 300), Vec2(20, 120), 0, Body.WALL, WALL_C))
-    w.add(Body(Vec2(200, 200), Vec2(100, 20), 0, Body.WALL, WALL_C))
-    w.add(Body(Vec2(760, 200), Vec2(100, 20), 0, Body.WALL, WALL_C))
-    w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(250, 550), Vec2(28, 28), 22.0, Body.BOX, RED, name="r", color_name="red"))
-    w.add(Body(Vec2(350, 550), Vec2(28, 28), 22.0, Body.BOX, BLUE, name="b", color_name="blue"))
-    w.add(Body(Vec2(450, 550), Vec2(28, 28), 22.0, Body.BOX, GREEN, name="g", color_name="green"))
-    w.add(Body(Vec2(550, 550), Vec2(28, 28), 22.0, Body.BOX, YELLOW, name="y", color_name="yellow"))
-    w.add(Body(Vec2(200, 120), Vec2(40, 40), 0, Body.ZONE, RED, name="zr", color_name="red", label="RED"))
-    w.add(Body(Vec2(400, 120), Vec2(40, 40), 0, Body.ZONE, BLUE, name="zb", color_name="blue", label="BLUE"))
-    w.add(Body(Vec2(600, 120), Vec2(40, 40), 0, Body.ZONE, GREEN, name="zg", color_name="green", label="GREEN"))
-    w.add(Body(Vec2(800, 120), Vec2(40, 40), 0, Body.ZONE, YELLOW, name="zy", color_name="yellow", label="YELLOW"))
+    w.add(Body(Vec2(150, 320), Vec2(20, 20), 0, Body.WALL, WALL_C))
+    w.add(Body(Vec2(480, 420), Vec2(20, 120), 0, Body.WALL, WALL_C))
+    w.add(Body(Vec2(200, 320), Vec2(100, 20), 0, Body.WALL, WALL_C))
+    w.add(Body(Vec2(760, 320), Vec2(100, 20), 0, Body.WALL, WALL_C))
+    w.add(Body(Vec2(100, 480), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
+    w.add(Body(Vec2(250, 480), Vec2(28, 28), 18.0, Body.BOX, RED, name="r", color_name="red"))
+    w.add(Body(Vec2(350, 480), Vec2(28, 28), 25.0, Body.BOX, BLUE, name="b", color_name="blue"))
+    w.add(Body(Vec2(450, 480), Vec2(28, 28), 30.0, Body.BOX, GREEN, name="g", color_name="green"))
+    w.add(Body(Vec2(550, 480), Vec2(28, 28), 22.0, Body.BOX, YELLOW, name="y", color_name="yellow"))
+    w.add(Body(Vec2(200, 220), Vec2(40, 40), 0, Body.ZONE, RED, name="zr", color_name="red", label="RED"))
+    w.add(Body(Vec2(400, 220), Vec2(40, 40), 0, Body.ZONE, BLUE, name="zb", color_name="blue", label="BLUE"))
+    w.add(Body(Vec2(600, 220), Vec2(40, 40), 0, Body.ZONE, GREEN, name="zg", color_name="green", label="GREEN"))
+    w.add(Body(Vec2(800, 220), Vec2(40, 40), 0, Body.ZONE, YELLOW, name="zy", color_name="yellow", label="YELLOW"))
 
 def _level_3(w):
     _walls(w)
@@ -724,6 +725,17 @@ class Game:
             self._ai_update(self.player1, dt)
 
         self.world.step(dt)
+
+        # Per-box coin reward when a box enters the correct zone
+        for b in self.world.bodies:
+            if b.body_type == Body.BOX and b.in_zone and not b.zone_rewarded:
+                b.zone_rewarded = True
+                self.coins += 5
+                for p in self.world.get_players():
+                    if (p.pos - b.pos).length_sq() < 200 * 200:
+                        p.floating_text = "+5 COINS!"
+                        p.floating_timer = 2.0
+                        break
 
         # Progress-bar logic for RESET / NEXT / PREV zones
         FILL_TIME = 1.2  # seconds to fill progress bar
