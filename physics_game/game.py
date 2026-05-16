@@ -26,6 +26,9 @@ class Vec2:
             return Vec2(0, 0)
         return self / l
     def copy(self): return Vec2(self.x, self.y)
+    def rotate(self, angle):
+        c, s = math.cos(angle), math.sin(angle)
+        return Vec2(self.x * c - self.y * s, self.x * s + self.y * c)
     def __repr__(self): return f"Vec2({self.x:.2f}, {self.y:.2f})"
 
 # ---------------------------------------------------------------------------
@@ -69,14 +72,59 @@ class Body:
         self.cooldown = 0.0
         self.floating_text = ""
         self.floating_timer = 0.0
+        # Rotation
+        self.angle = 0.0
+        self.angular_vel = 0.0
+        self.torque = 0.0
+        self.inertia = self._calc_inertia()
+        self.inv_inertia = 1.0 / self.inertia if self.inertia > 0 else 0.0
+        # COM offset relative to pos
+        total_area = 0.0
+        com = Vec2(0, 0)
+        for off, sz in self.parts:
+            area = (2 * sz.x) * (2 * sz.y)
+            total_area += area
+            com = com + off * area
+        if total_area > 0:
+            self.com_offset = com / total_area
+        else:
+            self.com_offset = Vec2(0, 0)
+
+    def _calc_inertia(self):
+        if self.mass <= 0:
+            return 0.0
+        # Approximate as sum of rectangles about COM
+        total_area = 0.0
+        com = Vec2(0, 0)
+        for off, sz in self.parts:
+            area = (2 * sz.x) * (2 * sz.y)
+            total_area += area
+            com = com + off * area
+        if total_area > 0:
+            com = com / total_area
+        else:
+            com = Vec2(0, 0)
+        inertia = 0.0
+        for off, sz in self.parts:
+            area = (2 * sz.x) * (2 * sz.y)
+            m_part = self.mass * (area / total_area)
+            dx = off.x - com.x
+            dy = off.y - com.y
+            # I = m*(w^2 + h^2)/12 + m*d^2
+            w, h = 2 * sz.x, 2 * sz.y
+            inertia += m_part * (w * w + h * h) / 12.0 + m_part * (dx * dx + dy * dy)
+        return inertia
 
     def min_x(self): return self.pos.x - self.size.x
     def max_x(self): return self.pos.x + self.size.x
     def min_y(self): return self.pos.y - self.size.y
     def max_y(self): return self.pos.y + self.size.y
 
-    def apply_force(self, f: Vec2):
+    def apply_force(self, f: Vec2, point=None):
         self.acc = self.acc + f * self.inv_mass
+        if point is not None:
+            r = point - (self.pos + self.com_offset)
+            self.torque += r.x * f.y - r.y * f.x
 
     def center_in_zone(self, zone):
         return (zone.min_x() <= self.pos.x <= zone.max_x() and
@@ -144,11 +192,15 @@ class World:
                 b.vel = b.vel.normalized() * self.MAX_SPEED
             b.vel = b.vel * self.LINEAR_DAMP
             b.acc = Vec2(0, 0)
+            b.angular_vel += b.torque * b.inv_inertia * dt
+            b.angular_vel *= 0.98  # angular damping
+            b.torque = 0.0
 
         for b in self.bodies:
             if b.mass <= 0:
                 continue
             b.pos = b.pos + b.vel * dt
+            b.angle += b.angular_vel * dt
 
         iterations = 6
         for _ in range(iterations):
@@ -168,6 +220,23 @@ class World:
                 self.gate_body.pos.y += (target_y - self.gate_body.pos.y) * 5 * dt
         return result
 
+    def _rotated_part_bounds(self, body, off, sz):
+        corners = [
+            off + Vec2(-sz.x, -sz.y),
+            off + Vec2( sz.x, -sz.y),
+            off + Vec2( sz.x,  sz.y),
+            off + Vec2(-sz.x,  sz.y),
+        ]
+        min_x = min_y = float('inf')
+        max_x = max_y = float('-inf')
+        for c in corners:
+            rc = body.pos + c.rotate(body.angle)
+            min_x = min(min_x, rc.x)
+            max_x = max(max_x, rc.x)
+            min_y = min(min_y, rc.y)
+            max_y = max(max_y, rc.y)
+        return min_x, max_x, min_y, max_y
+
     def _solve_contacts(self, dt):
         for i in range(len(self.bodies)):
             for j in range(i + 1, len(self.bodies)):
@@ -177,33 +246,57 @@ class World:
                     continue
                 if self.is_sensor(a) or self.is_sensor(b):
                     continue
-                if min(a.max_x(), b.max_x()) - max(a.min_x(), b.min_x()) <= 0:
+
+                # Broad-phase with rotated AABBs
+                a_min_x = a_max_x = a_min_y = a_max_y = None
+                b_min_x = b_max_x = b_min_y = b_max_y = None
+                for off, sz in a.parts:
+                    mx, Mx, my, My = self._rotated_part_bounds(a, off, sz)
+                    if a_min_x is None:
+                        a_min_x, a_max_x, a_min_y, a_max_y = mx, Mx, my, My
+                    else:
+                        a_min_x = min(a_min_x, mx); a_max_x = max(a_max_x, Mx)
+                        a_min_y = min(a_min_y, my); a_max_y = max(a_max_y, My)
+                for off, sz in b.parts:
+                    mx, Mx, my, My = self._rotated_part_bounds(b, off, sz)
+                    if b_min_x is None:
+                        b_min_x, b_max_x, b_min_y, b_max_y = mx, Mx, my, My
+                    else:
+                        b_min_x = min(b_min_x, mx); b_max_x = max(b_max_x, Mx)
+                        b_min_y = min(b_min_y, my); b_max_y = max(b_max_y, My)
+
+                if min(a_max_x, b_max_x) - max(a_min_x, b_min_x) <= 0:
                     continue
-                if min(a.max_y(), b.max_y()) - max(a.min_y(), b.min_y()) <= 0:
+                if min(a_max_y, b_max_y) - max(a_min_y, b_min_y) <= 0:
                     continue
 
                 for off_a, sz_a in a.parts:
                     for off_b, sz_b in b.parts:
-                        pos_a = a.pos + off_a
-                        pos_b = b.pos + off_b
-                        overlap_x = min(pos_a.x + sz_a.x, pos_b.x + sz_b.x) - max(pos_a.x - sz_a.x, pos_b.x - sz_b.x)
-                        overlap_y = min(pos_a.y + sz_a.y, pos_b.y + sz_b.y) - max(pos_a.y - sz_a.y, pos_b.y - sz_b.y)
+                        amin_x, amax_x, amin_y, amax_y = self._rotated_part_bounds(a, off_a, sz_a)
+                        bmin_x, bmax_x, bmin_y, bmax_y = self._rotated_part_bounds(b, off_b, sz_b)
+                        overlap_x = min(amax_x, bmax_x) - max(amin_x, bmin_x)
+                        overlap_y = min(amax_y, bmax_y) - max(amin_y, bmin_y)
                         if overlap_x <= 0 or overlap_y <= 0:
                             continue
 
                         if overlap_x < overlap_y:
-                            nx = -1.0 if pos_a.x < pos_b.x else 1.0
+                            nx = -1.0 if (amin_x + amax_x) < (bmin_x + bmax_x) else 1.0
                             ny = 0.0
                             penetration = overlap_x
                         else:
                             nx = 0.0
-                            ny = -1.0 if pos_a.y < pos_b.y else 1.0
+                            ny = -1.0 if (amin_y + amax_y) < (bmin_y + bmax_y) else 1.0
                             penetration = overlap_y
 
                         normal = Vec2(nx, ny)
-                        rel_vel = a.vel.copy()
-                        if b.mass > 0:
-                            rel_vel = rel_vel - b.vel
+                        # Relative velocity at contact point
+                        contact_point = Vec2((max(amin_x, bmin_x) + min(amax_x, bmax_x)) * 0.5,
+                                             (max(amin_y, bmin_y) + min(amax_y, bmax_y)) * 0.5)
+                        ra = contact_point - (a.pos + a.com_offset)
+                        rb = contact_point - (b.pos + b.com_offset)
+                        vel_a = a.vel + Vec2(-ra.y * a.angular_vel, ra.x * a.angular_vel)
+                        vel_b = b.vel + Vec2(-rb.y * b.angular_vel, rb.x * b.angular_vel)
+                        rel_vel = vel_a - vel_b
                         vel_along_normal = rel_vel.dot(normal)
                         if vel_along_normal > 0:
                             continue
@@ -215,8 +308,10 @@ class World:
 
                         if a.mass > 0:
                             a.vel = a.vel + contact_force * a.inv_mass * dt
+                            a.angular_vel += (ra.x * contact_force.y - ra.y * contact_force.x) * a.inv_inertia * dt
                         if b.mass > 0:
                             b.vel = b.vel - contact_force * b.inv_mass * dt
+                            b.angular_vel -= (rb.x * contact_force.y - rb.y * contact_force.x) * b.inv_inertia * dt
 
                         percent = 0.4
                         slop = 0.01
@@ -368,10 +463,10 @@ def _walls(w):
 
 def L_shape(pos, mass, color, name, color_name=""):
     parts = [
-        (Vec2(-15, -25), Vec2(15, 25)),
-        (Vec2(35, 15), Vec2(35, 15)),
+        (Vec2(-10, -20), Vec2(10, 25)),   # vertical leg 20x50
+        (Vec2(20, 10), Vec2(20, 10)),     # horizontal leg 40x20
     ]
-    return Body(pos, Vec2(70, 50), mass, Body.BOX, color, name=name, color_name=color_name, parts=parts)
+    return Body(pos, Vec2(35, 35), mass, Body.BOX, color, name=name, color_name=color_name, parts=parts)
 
 def _level_1(w):
     _walls(w)
@@ -931,10 +1026,21 @@ class Game:
                     pygame.draw.rect(self.screen, (60, 60, 60), rect, 2)
             elif b.body_type in (Body.PLAYER, Body.BOX):
                 for off, sz in b.parts:
-                    cx = int(b.pos.x + off.x)
-                    cy = int(b.pos.y + off.y)
-                    rect = pygame.Rect(cx - int(sz.x), cy - int(sz.y), int(sz.x * 2), int(sz.y * 2))
-                    pygame.draw.rect(self.screen, b.color, rect, border_radius=0)
+                    corners = [
+                        off + Vec2(-sz.x, -sz.y),
+                        off + Vec2( sz.x, -sz.y),
+                        off + Vec2( sz.x,  sz.y),
+                        off + Vec2(-sz.x,  sz.y),
+                    ]
+                    com = b.pos + b.com_offset
+                    poly = []
+                    for c in corners:
+                        local = c - b.com_offset
+                        rot = local.rotate(b.angle)
+                        world = com + rot
+                        poly.append((int(world.x), int(world.y)))
+                    pygame.draw.polygon(self.screen, b.color, poly)
+                    pygame.draw.polygon(self.screen, (60, 60, 60), poly, 2)
                 if b.body_type == Body.BOX:
                     box_w = b.size.x * 2
                     box_h = b.size.y * 2
