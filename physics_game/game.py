@@ -385,7 +385,6 @@ def _level_2(w):
     w.add(Body(Vec2(200, 200), Vec2(100, 20), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(760, 200), Vec2(100, 20), 0, Body.WALL, WALL_C))
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
-    w.add(Body(Vec2(150, 550), Vec2(14, 14), 8.0, Body.PLAYER, PINK, name="player2"))
     w.add(Body(Vec2(250, 550), Vec2(28, 28), 22.0, Body.BOX, RED, name="r", color_name="red"))
     w.add(Body(Vec2(350, 550), Vec2(28, 28), 22.0, Body.BOX, BLUE, name="b", color_name="blue"))
     w.add(Body(Vec2(450, 550), Vec2(28, 28), 22.0, Body.BOX, GREEN, name="g", color_name="green"))
@@ -620,7 +619,7 @@ LEVELS = [
 # Game
 # ---------------------------------------------------------------------------
 class Game:
-    def __init__(self):
+    def __init__(self, start_level=0):
         pygame.init()
         self.screen = pygame.display.set_mode((960, 640))
         pygame.display.set_caption("Physics Puzzle - Push the Box!")
@@ -631,7 +630,7 @@ class Game:
         self.small_font = pygame.font.SysFont("monospace", 28)
         self.fonts = {"font": self.font, "big": self.big_font, "huge": self.huge_font, "small": self.small_font}
         self.world = World()
-        self.level_idx = 0
+        self.level_idx = max(0, min(start_level, len(LEVELS) - 1))
         self.running = True
         self.won = False
         self.hint_alpha = 255
@@ -961,5 +960,12 @@ class Game:
 
 
 if __name__ == "__main__":
-    game = Game()
+    import sys
+    start_level = 0
+    if len(sys.argv) > 1:
+        try:
+            start_level = int(sys.argv[1]) - 1
+        except ValueError:
+            pass
+    game = Game(start_level=start_level)
     game.run()
