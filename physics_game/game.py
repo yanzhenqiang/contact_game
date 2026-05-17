@@ -238,6 +238,27 @@ class World:
             max_y = max(max_y, rc.y)
         return min_x, max_x, min_y, max_y
 
+    def _obb_corners(self, body, off, sz):
+        return [body.pos + (off + Vec2(sx * sz.x, sy * sz.y)).rotate(body.angle)
+                for sx, sy in [(-1, -1), (1, -1), (1, 1), (-1, 1)]]
+
+    def _sat_check(self, verts_a, verts_b):
+        axes = []
+        for i in range(2):
+            e = verts_a[i + 1] - verts_a[i]
+            axes.append(Vec2(-e.y, e.x).normalized())
+        for i in range(2):
+            e = verts_b[i + 1] - verts_b[i]
+            axes.append(Vec2(-e.y, e.x).normalized())
+        for axis in axes:
+            if axis.length() < 0.001:
+                continue
+            proj_a = [v.dot(axis) for v in verts_a]
+            proj_b = [v.dot(axis) for v in verts_b]
+            if max(proj_a) < min(proj_b) or max(proj_b) < min(proj_a):
+                return False
+        return True
+
     def _solve_contacts(self, dt):
         for i in range(len(self.bodies)):
             for j in range(i + 1, len(self.bodies)):
@@ -280,19 +301,25 @@ class World:
                         if overlap_x <= 0 or overlap_y <= 0:
                             continue
 
-                        if overlap_x < overlap_y:
-                            nx = -1.0 if (amin_x + amax_x) < (bmin_x + bmax_x) else 1.0
-                            ny = 0.0
-                            penetration = overlap_x
-                        else:
-                            nx = 0.0
-                            ny = -1.0 if (amin_y + amax_y) < (bmin_y + bmax_y) else 1.0
-                            penetration = overlap_y
+                        # SAT narrow-phase to reject false AABB overlaps
+                        verts_a = self._obb_corners(a, off_a, sz_a)
+                        verts_b = self._obb_corners(b, off_b, sz_b)
+                        if not self._sat_check(verts_a, verts_b):
+                            continue
 
-                        normal = Vec2(nx, ny)
-                        # Relative velocity at contact point
-                        contact_point = Vec2((max(amin_x, bmin_x) + min(amax_x, bmax_x)) * 0.5,
-                                             (max(amin_y, bmin_y) + min(amax_y, bmax_y)) * 0.5)
+                        # Use center-to-center direction as normal
+                        ca = sum((v.x, v.y) for v in verts_a)
+                        ca = Vec2(ca[0] / 4.0, ca[1] / 4.0)
+                        cb = sum((v.x, v.y) for v in verts_b)
+                        cb = Vec2(cb[0] / 4.0, cb[1] / 4.0)
+                        diff = cb - ca
+                        if diff.length() < 0.001:
+                            normal = Vec2(1, 0)
+                        else:
+                            normal = diff.normalized()
+                        penetration = min(overlap_x, overlap_y)
+
+                        contact_point = (ca + cb) * 0.5
                         ra = contact_point - (a.pos + a.com_offset)
                         rb = contact_point - (b.pos + b.com_offset)
                         vel_a = a.vel + Vec2(-ra.y * a.angular_vel, ra.x * a.angular_vel)
