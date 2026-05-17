@@ -50,7 +50,7 @@ class Body:
 
     SENSOR_TYPES = (ZONE, ZONE_COPY, ZONE_REMOVE, ZONE_RESET, ZONE_NEXT, ZONE_PREV)
 
-    def __init__(self, pos, size, mass, body_type, color, name="", color_name="", parts=None, number=None, operator=None, label="", required_number=None):
+    def __init__(self, pos, size, mass, body_type, color, name="", color_name="", parts=None, number=None, operator=None, label="", required_number=None, outline=None):
         self.pos = pos.copy()
         self.size = size.copy()
         self.vel = Vec2(0, 0)
@@ -62,6 +62,7 @@ class Body:
         self.name = name
         self.color_name = color_name
         self.parts = parts if parts is not None else [(Vec2(0, 0), size.copy())]
+        self.outline = outline  # list of Vec2 vertices for polygon rendering
         self.number = number
         self.operator = operator
         self.label = label
@@ -462,12 +463,21 @@ def _walls(w):
     w.add(Body(Vec2(980, 320), Vec2(20, 360), 0, Body.WALL, WALL_C))
 
 def L_shape(pos, mass, color, name, color_name=""):
-    # Standard L: vertical bar on left, horizontal bar on bottom
-    parts = [
-        (Vec2(-10, -25), Vec2(10, 25)),   # vertical 20x50, top-left
-        (Vec2(25, 10), Vec2(25, 10)),     # horizontal 50x20, bottom-right
+    # Single polygon L-shape (vertical left + horizontal bottom)
+    outline = [
+        Vec2(-10, -50),  # top-left of vertical
+        Vec2(0, -50),    # top-right of vertical
+        Vec2(0, 0),      # inner corner
+        Vec2(50, 0),     # top-right of horizontal
+        Vec2(50, 20),    # bottom-right of horizontal
+        Vec2(-10, 20),   # bottom-left
     ]
-    return Body(pos, Vec2(35, 35), mass, Body.BOX, color, name=name, color_name=color_name, parts=parts)
+    parts = [
+        (Vec2(-5, -25), Vec2(15, 35)),   # vertical 30x70 (covers left leg)
+        (Vec2(25, 10), Vec2(25, 10)),    # horizontal 50x20 (covers bottom leg)
+    ]
+    return Body(pos, Vec2(35, 35), mass, Body.BOX, color,
+                name=name, color_name=color_name, parts=parts, outline=outline)
 
 def _level_1(w):
     _walls(w)
@@ -520,8 +530,12 @@ def _level_5(w):
     w.add(Body(Vec2(100, 550), Vec2(14, 14), 8.0, Body.PLAYER, BLUE, name="player1"))
     w.add(L_shape(Vec2(350, 550), 28.0, RED, name="L1", color_name="red"))
     big_zone = Body(Vec2(830, 170), Vec2(35, 35), 0, Body.ZONE, RED, name="zl", color_name="red", label="L-SHAPE")
+    big_zone.outline = [
+        Vec2(-10, -50), Vec2(0, -50), Vec2(0, 0),
+        Vec2(50, 0), Vec2(50, 20), Vec2(-10, 20),
+    ]
     big_zone.parts = [
-        (Vec2(-10, -25), Vec2(10, 25)),
+        (Vec2(-5, -25), Vec2(15, 35)),
         (Vec2(25, 10), Vec2(25, 10)),
     ]
     w.add(big_zone)
@@ -972,17 +986,23 @@ class Game:
             if b.body_type not in Body.SENSOR_TYPES:
                 continue
             is_func = b.body_type in (Body.ZONE_COPY, Body.ZONE_REMOVE, Body.ZONE_RESET, Body.ZONE_NEXT, Body.ZONE_PREV)
-            for off, sz in b.parts:
-                cx = int(b.pos.x + off.x)
-                cy = int(b.pos.y + off.y)
-                rect = pygame.Rect(cx - int(sz.x), cy - int(sz.y), int(sz.x * 2), int(sz.y * 2))
+            if b.outline:
+                poly = [(int(b.pos.x + v.x), int(b.pos.y + v.y)) for v in b.outline]
                 if is_func:
-                    # Functional zones: dark gray
-                    pygame.draw.rect(self.screen, (60, 60, 80), rect, border_radius=4)
-                    pygame.draw.rect(self.screen, (200, 200, 220), rect, 2, border_radius=4)
+                    pygame.draw.polygon(self.screen, (60, 60, 80), poly)
+                    pygame.draw.polygon(self.screen, (200, 200, 220), poly, 2)
                 else:
-                    # Non-functional zones: hollow outline only
-                    pygame.draw.rect(self.screen, b.color, rect, 5, border_radius=4)
+                    pygame.draw.polygon(self.screen, b.color, poly, 5)
+            else:
+                for off, sz in b.parts:
+                    cx = int(b.pos.x + off.x)
+                    cy = int(b.pos.y + off.y)
+                    rect = pygame.Rect(cx - int(sz.x), cy - int(sz.y), int(sz.x * 2), int(sz.y * 2))
+                    if is_func:
+                        pygame.draw.rect(self.screen, (60, 60, 80), rect, border_radius=4)
+                        pygame.draw.rect(self.screen, (200, 200, 220), rect, 2, border_radius=4)
+                    else:
+                        pygame.draw.rect(self.screen, b.color, rect, 5, border_radius=4)
             if b.label and is_func:
                 zone_w = b.size.x * 2
                 zone_h = b.size.y * 2
@@ -1026,22 +1046,33 @@ class Game:
                     pygame.draw.rect(self.screen, b.color, rect)
                     pygame.draw.rect(self.screen, (60, 60, 60), rect, 2)
             elif b.body_type in (Body.PLAYER, Body.BOX):
-                for off, sz in b.parts:
-                    corners = [
-                        off + Vec2(-sz.x, -sz.y),
-                        off + Vec2( sz.x, -sz.y),
-                        off + Vec2( sz.x,  sz.y),
-                        off + Vec2(-sz.x,  sz.y),
-                    ]
+                if b.outline:
                     com = b.pos + b.com_offset
                     poly = []
-                    for c in corners:
-                        local = c - b.com_offset
+                    for v in b.outline:
+                        local = v - b.com_offset
                         rot = local.rotate(b.angle)
                         world = com + rot
                         poly.append((int(world.x), int(world.y)))
                     pygame.draw.polygon(self.screen, b.color, poly)
                     pygame.draw.polygon(self.screen, (60, 60, 60), poly, 2)
+                else:
+                    for off, sz in b.parts:
+                        corners = [
+                            off + Vec2(-sz.x, -sz.y),
+                            off + Vec2( sz.x, -sz.y),
+                            off + Vec2( sz.x,  sz.y),
+                            off + Vec2(-sz.x,  sz.y),
+                        ]
+                        com = b.pos + b.com_offset
+                        poly = []
+                        for c in corners:
+                            local = c - b.com_offset
+                            rot = local.rotate(b.angle)
+                            world = com + rot
+                            poly.append((int(world.x), int(world.y)))
+                        pygame.draw.polygon(self.screen, b.color, poly)
+                        pygame.draw.polygon(self.screen, (60, 60, 60), poly, 2)
                 if b.body_type == Body.BOX:
                     box_w = b.size.x * 2
                     box_h = b.size.y * 2
